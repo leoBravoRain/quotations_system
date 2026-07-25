@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { FixedService, VariableService } from "../../types/services.types";
 import {
+  deleteCategoryById,
   removeFixedService,
   removeVariableService,
+  reorderCategories,
+  updateCategoryById,
   updateFixedService,
-  updateServiceCategory,
   updateVariableService,
 } from "../../services/services.service";
 import ExcelUpload from "./components/ExcelUpload";
 import ServicesTable from "./components/ServicesTable";
-import CategoriesManager from "./components/CategoriesManager";
+import VariableServicesByCategory from "./components/variableServices/VariableServicesByCategory";
 import { useServices } from "../../hooks/useServices";
 import { ServiceType } from "./constants";
 import VariableServiceForm from "./components/variableServices/VariableServiceForm";
@@ -33,16 +35,12 @@ export default function ServicesPage() {
   const {
     variableServices,
     rawFixedServices: fixedServices,
-    inactiveCategories,
+    orderedCategories,
+    categoryLinks,
     loading,
     error,
     reload: loadServices,
   } = useServices();
-
-  // Distinct category names across variable services (categories are strings).
-  const categories = [
-    ...new Set(variableServices.map((s) => s.category).filter(Boolean)),
-  ];
 
   const handleUploadSuccess = async () => {
     setUploadError(null);
@@ -118,13 +116,48 @@ export default function ServicesPage() {
     }
   };
 
-  const handleToggleCategory = async (name: string, nextActive: boolean) => {
+  const handleRenameCategory = async (id: number, name: string) => {
+    await updateCategoryById(id, { name });
+    await loadServices();
+  };
+
+  const handleToggleCategoryActive = async (
+    id: number,
+    nextActive: boolean,
+  ) => {
+    await updateCategoryById(id, { is_active: nextActive });
+    await loadServices();
+  };
+
+  const handleReorderCategories = async (orderedIds: number[]) => {
+    await reorderCategories(orderedIds);
+    await loadServices();
+  };
+
+  // Delete a category, surfacing the backend "orphan guard": if any service
+  // would be left with no category, the backend returns 409 + service_ids.
+  const handleDeleteCategory = async (id: number) => {
     try {
-      await updateServiceCategory(name, nextActive);
+      await deleteCategoryById(id);
       await loadServices();
-    } catch (error) {
-      console.error("Error al actualizar el estado de la categoría", error);
-      alert("Error al actualizar el estado de la categoría");
+    } catch (err) {
+      const data = (
+        err as {
+          response?: { data?: { message?: string; service_ids?: number[] } };
+        }
+      )?.response?.data;
+      if (data?.service_ids?.length) {
+        const names = data.service_ids
+          .map((sid) => variableServices.find((s) => s.id === sid)?.name)
+          .filter((n): n is string => !!n);
+        const list = names.length
+          ? names.join(", ")
+          : `${data.service_ids.length} servicio(s)`;
+        throw new Error(
+          `No se puede eliminar: estos servicios quedarían sin categoría: ${list}. Asígnalos a otra categoría primero.`,
+        );
+      }
+      throw new Error(data?.message || "No se pudo eliminar la categoría.");
     }
   };
 
@@ -208,21 +241,37 @@ export default function ServicesPage() {
         onSuccess={handleUploadSuccess}
       />
 
-      {/* Categories activation manager */}
-      <CategoriesManager
-        categories={categories}
-        inactiveCategories={inactiveCategories}
-        onToggleCategory={handleToggleCategory}
+      {/* Variable services grouped by category. Each category box header has
+          the drag handle (reorder categories) and the ⋮ menu (rename /
+          activate-deactivate / delete). Services inside drag to reorder. */}
+      <div className="mb-2 text-sm font-medium text-gray-700">
+        Servicios Variables
+      </div>
+      <VariableServicesByCategory
+        orderedCategories={orderedCategories}
+        variableServices={variableServices}
+        categoryLinks={categoryLinks}
+        onEdit={(s) => handleEditService(s, ServiceType.VARIABLE)}
+        onDelete={(id) => handleDeleteService(id, ServiceType.VARIABLE)}
+        onToggleActive={(s) => handleToggleActive(s, ServiceType.VARIABLE)}
+        onReordered={loadServices}
+        onRenameCategory={handleRenameCategory}
+        onToggleCategoryActive={handleToggleCategoryActive}
+        onDeleteCategory={handleDeleteCategory}
+        onReorderCategories={handleReorderCategories}
       />
 
-      {/* Services Table */}
-      <ServicesTable
-        variableServices={variableServices}
-        fixedServices={fixedServices}
-        onEditService={handleEditService}
-        onDeleteService={handleDeleteService}
-        onToggleActive={handleToggleActive}
-      />
+      {/* Fixed services table (unchanged) */}
+      <div className="mt-6">
+        <ServicesTable
+          variableServices={[]}
+          fixedServices={fixedServices}
+          onEditService={handleEditService}
+          onDeleteService={handleDeleteService}
+          onToggleActive={handleToggleActive}
+          hideVariable
+        />
+      </div>
 
       <FixedServiceForm
         isOpen={showFixedServiceForm}
