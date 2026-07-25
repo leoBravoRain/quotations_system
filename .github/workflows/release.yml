@@ -55,9 +55,9 @@ jobs:
       - name: Install dependencies
         working-directory: api-rest
         run: npm ci
-      - name: Run unit tests
+      - name: Run unit tests (with coverage threshold)
         working-directory: api-rest
-        run: npm test -- --ci
+        run: npm test -- --ci --coverage
 
   migrate:
     name: 1 · Apply DB migrations
